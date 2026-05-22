@@ -1,83 +1,99 @@
-/**
- * Menghitung nilai Shannon Entropy dari sebuah string.
- * Semakin tinggi nilainya, semakin acak string tersebut.
- * 
- * @param text String yang akan dievaluasi (misal: token atau password)
- * @returns Nilai entropi dalam satuan bit/karakter
- */
-export function calculateShannonEntropy(text: string): number {
-    // Jika string kosong, entropinya 0
-    if (!text || text.length === 0) {
-        return 0;
-    }
+import * as vscode from 'vscode';
 
-    const len = text.length;
-    const charCounts = new Map<string, number>();
+// Konfigurasi modul entropy — sesuai BAB 3 Sub-bab 3.5.7
+const CONFIG = {
+    MIN_TOKEN_LENGTH : 20,
+    ENTROPY_THRESHOLD: 4.0,  // bit/char — berdasarkan Reaz & Wunder (2024) [3]
+    HIGH_ENTROPY_CHARSETS: [
+        /^[0-9a-zA-Z+/=]{20,}$/,    // Base64
+        /^[0-9a-fA-F]{20,}$/,        // Hex
+        /^[0-9a-zA-Z\-_]{20,}$/,     // URL-safe Base64 / token umum
+    ],
+};
 
-    // Hitung frekuensi (jumlah kemunculan) setiap karakter unik
-    for (let i = 0; i < len; i++) {
-        const char = text[i];
-        const currentCount = charCounts.get(char) || 0;
-        charCounts.set(char, currentCount + 1);
+// Rumus: H(s) = -Σ p(x) × log₂(p(x))
+// Sesuai BAB 3 Sub-bab 3.5.7 dan BAB 2 Sub-bab 2.2.5
+export function calculateShannonEntropy(str: string): number {
+    if (str.length === 0) { return 0; }
+
+    const freq = new Map<string, number>();
+    for (const char of str) {
+        freq.set(char, (freq.get(char) ?? 0) + 1);
     }
 
     let entropy = 0;
-
-    // Hitung probabilitas (p_i) dan terapkan rumus Shannon
-    for (const count of charCounts.values()) {
-        const p_i = count / len; 
-        entropy -= p_i * Math.log2(p_i);
+    for (const count of freq.values()) {
+        const p = count / str.length;
+        entropy -= p * Math.log2(p);
     }
-
     return entropy;
 }
 
-// Ambang batas (threshold) sesuai literatur Reaz & Wunder (2024)
-const ENTROPY_THRESHOLD = 3.5; 
-const MIN_LENGTH = 20;
+// Pola assignment: const x = "nilai", key: 'nilai', KEY="nilai"
+const ASSIGNMENT_PATTERN = /(?:=|:)\s*['"`]([^'"`\s]{20,})['"`]/g;
 
-export function isHighEntropySecret(text: string): boolean {
-    // Filter 1: Abaikan jika terlalu pendek (menekan False Positive)
-    if (text.length < MIN_LENGTH) {
-        return false;
-    }
+// Kata kunci baris yang dikecualikan
+const SKIP_KEYWORDS = [
+    'import', 'require', 'from', 'http://', 'https://',
+    'console.', '//', '/*', ' * ', '.ts', '.js', '.json',
+    '.png', '.jpg', '.svg', 'describe(', 'it(', 'test(',
+];
 
-    // Filter 2 & 3: Hitung Entropi dan Evaluasi dengan ambang batas
-    const entropyValue = calculateShannonEntropy(text);
-    return entropyValue >= ENTROPY_THRESHOLD;
-}
+export function detectWithEntropy(
+    document: vscode.TextDocument
+): vscode.Diagnostic[] {
 
-// Regex ini menangkap teks di dalam tanda kutip tunggal ('...'), ganda ("..."), atau backtick (`...`)
-// yang berada di sebelah kanan tanda sama dengan (=) atau titik dua (:)
-const ASSIGNMENT_PATTERN = /[:=]\s*(['"`])(.*?)\1/g;
+    const diagnostics: vscode.Diagnostic[] = [];
+    const lines = document.getText().split('\n');
 
-/**
- * Fungsi utama yang akan dipanggil oleh Detection Engine di extension.ts
- * Memindai satu baris kode, mengekstrak string-nya, lalu menghitung entropinya.
- */
-export function scanLineForEntropy(lineText: string, lineNumber: number) {
-    const findings = [];
-    let match;
+    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+        const line    = lines[lineNum];
+        const trimmed = line.trimStart();
 
-    // Looping jika ada lebih dari satu variabel dalam satu baris
-    while ((match = ASSIGNMENT_PATTERN.exec(lineText)) !== null) {
-        // match[2] adalah isi teks di dalam tanda kutip
-        const extractedString = match[2]; 
-        
-        if (isHighEntropySecret(extractedString)) {
-            // Hitung di kolom mana string ini berada agar garis merah/kuning posisinya akurat
-            const startCol = match.index + match[0].indexOf(extractedString);
-            const endCol = startCol + extractedString.length;
+        // Filter konteks: lewati import, komentar, URL
+        if (SKIP_KEYWORDS.some(kw => trimmed.includes(kw))) { continue; }
 
-            findings.push({
-                line: lineNumber,
-                startCol: startCol,
-                endCol: endCol,
-                secret: extractedString,
-                entropy: calculateShannonEntropy(extractedString).toFixed(3)
-            });
+        ASSIGNMENT_PATTERN.lastIndex = 0;
+        let match: RegExpExecArray | null;
+
+        while ((match = ASSIGNMENT_PATTERN.exec(line)) !== null) {
+            const token = match[1];
+
+            // Filter 1: panjang minimum
+            if (token.length < CONFIG.MIN_TOKEN_LENGTH) { continue; }
+
+            // Filter 2: charset high-entropy
+            const validCharset =
+                CONFIG.HIGH_ENTROPY_CHARSETS.some(cs => cs.test(token));
+            if (!validCharset) { continue; }
+
+            // Filter 3: hitung & bandingkan entropy
+            const entropy = calculateShannonEntropy(token);
+            if (entropy < CONFIG.ENTROPY_THRESHOLD) { continue; }
+
+            // Lolos semua filter → tandai sebagai CG009
+            const tokenCol = line.indexOf(token, match.index);
+            if (tokenCol === -1) { continue; }
+
+            const range = new vscode.Range(
+                new vscode.Position(lineNum, tokenCol),
+                new vscode.Position(lineNum, tokenCol + token.length),
+            );
+
+            const diag = new vscode.Diagnostic(
+                range,
+                `[CredGuard-CG009] Entropi Shannon tinggi: H = ${entropy.toFixed(2)} bit/char (threshold ${CONFIG.ENTROPY_THRESHOLD}). Kemungkinan token/kunci rahasia hardcoded.`,
+                vscode.DiagnosticSeverity.Warning,
+            );
+            diag.source = 'CredGuard';
+            diag.code   = {
+                value:  'CG009',
+                target: vscode.Uri.parse('https://owasp.org/www-project-top-ten/2017/A3_2017-Sensitive_Data_Exposure'),
+            };
+
+            diagnostics.push(diag);
         }
     }
 
-    return findings;
+    return diagnostics;
 }

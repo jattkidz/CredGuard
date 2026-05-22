@@ -1,78 +1,112 @@
 import * as vscode from 'vscode';
-// Impor modul entropi yang sudah kita buat
-import { scanLineForEntropy } from './detectors/entropyDetector';
+import { detectWithRegex }   from './detectors/regexDetector';
+import { detectWithEntropy } from './detectors/entropyDetector';
+
+// Tipe berkas yang dipindai sesuai BAB 3 Sub-bab 3.5.6
+const SUPPORTED_LANGUAGES = [
+    'javascript', 'typescript', 'python', 'php',
+    'shellscript', 'dotenv', 'yaml', 'json', 'plaintext',
+];
+
+// Debounce 300ms sesuai BAB 3 Sub-bab 3.5.6
+const DEBOUNCE_MS = 300;
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('CredGuard: Mesin Hibrida (Regex + Entropy) Aktif! 🚀');
 
-    // Buat wadah untuk menampung garis merah & kuning (Diagnostics)
-    const diagnosticCollection = vscode.languages.createDiagnosticCollection('credguard');
+    const diagnosticCollection =
+        vscode.languages.createDiagnosticCollection('credguard');
     context.subscriptions.push(diagnosticCollection);
 
-    // Fungsi inti: SCANNER
-    function scanDocument(document: vscode.TextDocument) {
-        // Hanya scan file teks fisik
-        if (document.uri.scheme !== 'file') {
-            return;
-        }
+    const debounceTimers = new Map<string, any>();
 
-        const diagnostics: vscode.Diagnostic[] = [];
-        const text = document.getText();
+    // ── Fungsi inti: scan dokumen ─────────────────────────────
+    function scanDocument(document: vscode.TextDocument): void {
+        // Filter 1: hanya file dari disk
+        if (document.uri.scheme !== 'file') { return; }
+        // Filter 2: file terlalu besar (>500KB) — sesuai BAB 3 iterasi 3
+        if (document.getText().length > 500_000) { return; }
+        // Filter 3: tipe bahasa yang didukung
+        if (!SUPPORTED_LANGUAGES.includes(document.languageId)) { return; }
 
-        // ========================================================
-        // MESIN 1: PATTERN MATCHING (REGEX) -> GARIS MERAH
-        // ========================================================
-        const awsRegex = /AKIA[0-9A-Z]{16}/g;
-        let matchRegex;
+        // Jalankan kedua modul deteksi (BAB 3 Gambar 3.4)
+        const regexFindings   = detectWithRegex(document);
+        const entropyFindings = detectWithEntropy(document);
 
-        while ((matchRegex = awsRegex.exec(text)) !== null) {
-            const startPos = document.positionAt(matchRegex.index);
-            const endPos = document.positionAt(matchRegex.index + matchRegex[0].length);
-            const range = new vscode.Range(startPos, endPos);
+        // Deduplikasi — satu posisi hanya 1 peringatan
+        const seen  = new Set<string>();
+        const unique = [...regexFindings, ...entropyFindings].filter(d => {
+            const key = `${d.range.start.line}:${d.range.start.character}`;
+            if (seen.has(key)) { return false; }
+            seen.add(key);
+            return true;
+        });
 
-            const diagnostic = new vscode.Diagnostic(
-                range,
-                '⚠️ BAHAYA: Terdeteksi AWS Access Key! (Pola Regex)',
-                vscode.DiagnosticSeverity.Error // Level Merah (Error)
-            );
-            diagnostic.code = { value: 'CG001', target: vscode.Uri.parse('https://aws.amazon.com/security') };
-            diagnostics.push(diagnostic);
-        }
-
-        // ========================================================
-        // MESIN 2: SHANNON ENTROPY -> GARIS KUNING
-        // ========================================================
-        for (let i = 0; i < document.lineCount; i++) {
-            const line = document.lineAt(i);
-            
-            // Lempar isi baris ke file entropyDetector.ts
-            const entropyFindings = scanLineForEntropy(line.text, i);
-            
-            for (const finding of entropyFindings) {
-                const range = new vscode.Range(
-                    new vscode.Position(finding.line, finding.startCol),
-                    new vscode.Position(finding.line, finding.endCol)
-                );
-
-                const diagnostic = new vscode.Diagnostic(
-                    range,
-                    `[CredGuard Warning] Potensi token acak (Entropi: ${finding.entropy} bit/char). Pindahkan ke .env!`,
-                    vscode.DiagnosticSeverity.Warning // Level Kuning (Warning)
-                );
-                diagnostics.push(diagnostic);
-            }
-        }
-
-        // Tampilkan semua garis di editor
-        diagnosticCollection.set(document.uri, diagnostics);
+        diagnosticCollection.set(document.uri, unique);
     }
 
-    // Event Listener
+    // ── Debounce saat mengetik ───────────────────────────────
+    function scheduleScan(document: vscode.TextDocument): void {
+        const key = document.uri.toString();
+        const existing = debounceTimers.get(key);
+        if (existing) { clearTimeout(existing); }
+
+        const timer = setTimeout(() => {
+            scanDocument(document);
+            debounceTimers.delete(key);
+        }, DEBOUNCE_MS);
+
+        debounceTimers.set(key, timer);
+    }
+
+    // ── Event listeners ─────────────────────────────────────
+    // Scan file yang aktif saat ekstensi pertama aktif
     if (vscode.window.activeTextEditor) {
         scanDocument(vscode.window.activeTextEditor.document);
     }
-    context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(doc => scanDocument(doc)));
-    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => scanDocument(event.document)));
+
+    context.subscriptions.push(
+        // Pindah tab
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            if (editor) { scanDocument(editor.document); }
+        }),
+        // Mengetik (dengan debounce)
+        vscode.workspace.onDidChangeTextDocument(e => {
+            scheduleScan(e.document);
+        }),
+        // Buka file baru
+        vscode.workspace.onDidOpenTextDocument(doc => {
+            scanDocument(doc);
+        }),
+        // Tutup file — hapus diagnostik
+        vscode.workspace.onDidCloseTextDocument(doc => {
+            diagnosticCollection.delete(doc.uri);
+            debounceTimers.delete(doc.uri.toString());
+        }),
+    );
+
+    // ── Command: Scan Manual (BAB 3 iterasi 3) ───────────────
+    // Ctrl+Shift+P → "CredGuard: Scan File Sekarang"
+    context.subscriptions.push(
+        vscode.commands.registerCommand('credguard.scanNow', () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showWarningMessage(
+                    'CredGuard: Tidak ada file aktif untuk di-scan.'
+                );
+                return;
+            }
+            scanDocument(editor.document);
+            const count =
+                diagnosticCollection.get(editor.document.uri)?.length ?? 0;
+            vscode.window.showInformationMessage(
+                count > 0
+                    ? `CredGuard: Ditemukan ${count} potensi kebocoran kredensial!`
+                    : 'CredGuard: Tidak ada kredensial sensitif yang terdeteksi.'
+            );
+        })
+    );
+
+    console.log('CredGuard aktif — melindungi kode dari kebocoran kredensial.');
 }
 
 export function deactivate() {}
