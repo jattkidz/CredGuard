@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 
 // Kamus pola regex — CG001–CG008
-// Sesuai Tabel 3.3 BAB III
 interface PatternEntry {
     id: string;
     name: string;
@@ -14,10 +13,10 @@ interface PatternEntry {
 const PATTERN_DICTIONARY: PatternEntry[] = [
     {
         id: 'CG001', name: 'AWS Access Key ID',
-        pattern: /\bAKIA[0-9A-Z]{16,}\b/g, 
+        pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
         severity: vscode.DiagnosticSeverity.Error,
         message: '[CredGuard-CG001] AWS Access Key ID terdeteksi! Pindahkan ke process.env.AWS_ACCESS_KEY_ID.',
-        docUrl: 'https://docs.aws.amazon.com/general/latest/gr/aws-access-keys-best-practices.html',
+        docUrl: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html',
     },
     {
         id: 'CG002', name: 'Google Cloud API Key',
@@ -35,7 +34,7 @@ const PATTERN_DICTIONARY: PatternEntry[] = [
     },
     {
         id: 'CG004', name: 'GitHub Personal Access Token',
-        pattern: /\bghp_[0-9a-zA-Z]{36}\b/g,
+        pattern: /\bgh(?:p|o|u|s|r)_[A-Za-z0-9]{36}\b/g,
         severity: vscode.DiagnosticSeverity.Error,
         message: '[CredGuard-CG004] GitHub PAT terdeteksi! Revoke token ini segera.',
         docUrl: 'https://docs.github.com/en/authentication/keeping-your-account-and-data-secure',
@@ -49,17 +48,17 @@ const PATTERN_DICTIONARY: PatternEntry[] = [
     },
     {
         id: 'CG006', name: 'Private Key PEM',
-        pattern: /-----BEGIN\s(RSA\s|EC\s|OPENSSH\s)?PRIVATE KEY-----/g,
+        pattern: /-----(?:BEGIN|END)\s(?:RSA\s|DSA\s|EC\s|OPENSSH\s|PGP\s)?PRIVATE(?: KEY| KEY BLOCK)-----/g,
         severity: vscode.DiagnosticSeverity.Error,
         message: '[CredGuard-CG006] Private Key (PEM) terdeteksi! Kunci privat tidak boleh ada di kode sumber.',
         docUrl: 'https://owasp.org/www-community/vulnerabilities/Sensitive_Data_Exposure',
     },
     {
         id: 'CG007', name: 'Password Hardcoded',
-        pattern: /\b(db_password|password|passwd|pwd|secret|api_secret)\b\s*[:=]\s*['"][^'"]{8,}['"]/gi,
+        pattern: /\b(?:db_?password|adminpassword|userpassword|password|passwd|pwd|secret|sessionsecret|api_secret)\b\s*[:=]\s*['"]?[^'"\r\n]{8,}['"]?/gi,
         severity: vscode.DiagnosticSeverity.Warning,
         message: '[CredGuard-CG007] Password atau secret hardcoded terdeteksi! Gunakan variabel lingkungan.',
-        docUrl: 'https://owasp.org/www-project-top-ten/2017/A3_2017-Sensitive_Data_Exposure',
+        docUrl: 'https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_password',
     },
     {
         id: 'CG008', name: 'Slack Bot Token',
@@ -78,7 +77,6 @@ export function detectWithRegex(
     const diagnostics: vscode.Diagnostic[] = [];
 
     for (const entry of PATTERN_DICTIONARY) {
-        // WAJIB reset lastIndex sebelum setiap pencarian
         entry.pattern.lastIndex = 0;
         let match: RegExpExecArray | null;
 

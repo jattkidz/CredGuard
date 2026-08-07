@@ -2,13 +2,16 @@ import * as vscode from 'vscode';
 import { detectWithRegex }   from './detectors/regexDetector';
 import { detectWithEntropy } from './detectors/entropyDetector';
 
-// Tipe berkas yang dipindai sesuai BAB 3 Sub-bab 3.5.6
+// Tipe berkas yang dipindai
 const SUPPORTED_LANGUAGES = [
-    'javascript', 'typescript', 'python', 'php',
-    'shellscript', 'dotenv', 'yaml', 'json', 'plaintext',
+    'javascript',
+    'typescript',
+    'python',
+    'php',
+    'dotenv',
 ];
 
-// Debounce 300ms sesuai BAB 3 Sub-bab 3.5.6
+// Debounce 300ms
 const DEBOUNCE_MS = 300;
 
 export function activate(context: vscode.ExtensionContext) {
@@ -23,12 +26,12 @@ export function activate(context: vscode.ExtensionContext) {
     function scanDocument(document: vscode.TextDocument): void {
         // Filter 1: hanya file dari disk
         if (document.uri.scheme !== 'file') { return; }
-        // Filter 2: file terlalu besar (>500KB) — sesuai BAB 3 iterasi 3
+        // Filter 2: file terlalu besar (>500KB)
         if (document.getText().length > 500_000) { return; }
         // Filter 3: tipe bahasa yang didukung
         if (!SUPPORTED_LANGUAGES.includes(document.languageId)) { return; }
 
-        // Jalankan kedua modul deteksi (BAB 3 Gambar 3.4)
+        // Jalankan kedua modul deteksi
         const regexFindings   = detectWithRegex(document);
         const entropyFindings = detectWithEntropy(document);
 
@@ -82,28 +85,6 @@ export function activate(context: vscode.ExtensionContext) {
             diagnosticCollection.delete(doc.uri);
             debounceTimers.delete(doc.uri.toString());
         }),
-    );
-
-    // ── Command: Scan Manual (BAB 3 iterasi 3) ───────────────
-    // Ctrl+Shift+P → "CredGuard: Scan File Sekarang"
-    context.subscriptions.push(
-        vscode.commands.registerCommand('credguard.scanNow', () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                vscode.window.showWarningMessage(
-                    'CredGuard: Tidak ada file aktif untuk di-scan.'
-                );
-                return;
-            }
-            scanDocument(editor.document);
-            const count =
-                diagnosticCollection.get(editor.document.uri)?.length ?? 0;
-            vscode.window.showInformationMessage(
-                count > 0
-                    ? `CredGuard: Ditemukan ${count} potensi kebocoran kredensial!`
-                    : 'CredGuard: Tidak ada kredensial sensitif yang terdeteksi.'
-            );
-        })
     );
 
     console.log('CredGuard aktif — melindungi kode dari kebocoran kredensial.');

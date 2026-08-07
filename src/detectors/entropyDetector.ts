@@ -1,96 +1,184 @@
 import * as vscode from 'vscode';
 
-// Konfigurasi modul entropy — sesuai BAB 3 Sub-bab 3.5.7
+// ===============================
+// Konfigurasi Entropy
+// ===============================
 const CONFIG = {
-    MIN_TOKEN_LENGTH : 20,
-    ENTROPY_THRESHOLD: 4.0,  // bit/char — berdasarkan Reaz & Wunder (2024) [3]
+    MIN_TOKEN_LENGTH: 20,
+    ENTROPY_THRESHOLD: 4.0,
     HIGH_ENTROPY_CHARSETS: [
-        /^[0-9a-zA-Z+/=]{20,}$/,    // Base64
-        /^[0-9a-fA-F]{20,}$/,        // Hex
-        /^[0-9a-zA-Z\-_]{20,}$/,     // URL-safe Base64 / token umum
+        /^[0-9a-zA-Z+/=]{20,}$/,
+        /^[0-9a-fA-F]{20,}$/,
+        /^[0-9a-zA-Z\-_]{20,}$/,
     ],
 };
 
-// Rumus: H(s) = -Σ p(x) × log₂(p(x))
-// Sesuai BAB 3 Sub-bab 3.5.7 dan BAB 2 Sub-bab 2.2.5
+// ===============================
+// Kata kunci variabel sensitif
+// ===============================
+const SECRET_CONTEXT = [
+    "key",
+    "apikey",
+    "api_key",
+    "secret",
+    "password",
+    "passwd",
+    "pwd",
+    "token",
+    "jwt",
+    "auth",
+    "oauth",
+    "access",
+    "refresh",
+    "session",
+    "private",
+    "credential",
+    "client",
+    "stripe",
+    "slack",
+    "aws",
+    "google",
+    "encryption",
+];
+
+// ===============================
+// Shannon Entropy
+// ===============================
 export function calculateShannonEntropy(str: string): number {
-    if (str.length === 0) { return 0; }
+
+    if (str.length === 0) {
+        return 0;
+    }
 
     const freq = new Map<string, number>();
-    for (const char of str) {
-        freq.set(char, (freq.get(char) ?? 0) + 1);
+
+    for (const ch of str) {
+        freq.set(ch, (freq.get(ch) ?? 0) + 1);
     }
 
     let entropy = 0;
+
     for (const count of freq.values()) {
         const p = count / str.length;
         entropy -= p * Math.log2(p);
     }
+
     return entropy;
 }
 
-// Pola assignment: const x = "nilai", key: 'nilai', KEY="nilai"
-const ASSIGNMENT_PATTERN = /(?:=|:)\s*['"`]([^'"`\s]{20,})['"`]/g;
+// ===============================
+// Assignment Pattern
+// ===============================
+const ASSIGNMENT_PATTERN =
+/([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?\s*=\s*['"`]([^'"`\r\n]{20,})['"`]/g;
 
-// Kata kunci baris yang dikecualikan
+
+// ===============================
+// Skip Context
+// ===============================
 const SKIP_KEYWORDS = [
-    'import', 'require', 'from', 'http://', 'https://',
-    'console.', '//', '/*', ' * ', '.ts', '.js', '.json',
-    '.png', '.jpg', '.svg', 'describe(', 'it(', 'test(',
+    "import",
+    "require",
+    "from",
+    "http://",
+    "https://",
+    "console.",
+    "//",
+    "/*",
+    " * ",
+    ".ts",
+    ".js",
+    ".json",
+    ".png",
+    ".jpg",
+    ".svg",
+    "describe(",
+    "it(",
+    "test(",
 ];
 
+// ===============================
+// Detector
+// ===============================
 export function detectWithEntropy(
     document: vscode.TextDocument
-): vscode.Diagnostic[] {
 
+): vscode.Diagnostic[] {
     const diagnostics: vscode.Diagnostic[] = [];
-    const lines = document.getText().split('\n');
+    const lines = document.getText().split("\n");
 
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-        const line    = lines[lineNum];
-        const trimmed = line.trimStart();
-
-        // Filter konteks: lewati import, komentar, URL
-        if (SKIP_KEYWORDS.some(kw => trimmed.includes(kw))) { continue; }
+        const line = lines[lineNum];
+        const trimmed = line.trim();
+        // Skip komentar, import, url, dsb.
+        if (SKIP_KEYWORDS.some(k => trimmed.includes(k))) {
+            continue;
+        }
 
         ASSIGNMENT_PATTERN.lastIndex = 0;
+
         let match: RegExpExecArray | null;
 
         while ((match = ASSIGNMENT_PATTERN.exec(line)) !== null) {
-            const token = match[1];
+            const variableName = match[1].toLowerCase();
+            const token = match[2];
 
-            // Filter 1: panjang minimum
-            if (token.length < CONFIG.MIN_TOKEN_LENGTH) { continue; }
-
-            // Filter 2: charset high-entropy
+            // ===========================
+            // Filter Context
+            // ===========================
+            if (!SECRET_CONTEXT.some(k => variableName.includes(k))) {
+                continue;
+            }
+            // ===========================
+            // Panjang minimum
+            // ===========================
+            if (token.length < CONFIG.MIN_TOKEN_LENGTH) {
+                continue;
+            }
+            // ===========================
+            // Charset
+            // ===========================
             const validCharset =
-                CONFIG.HIGH_ENTROPY_CHARSETS.some(cs => cs.test(token));
-            if (!validCharset) { continue; }
-
-            // Filter 3: hitung & bandingkan entropy
+                CONFIG.HIGH_ENTROPY_CHARSETS.some(r => r.test(token));
+            if (!validCharset) {
+                continue;
+            }
+            // ===========================
+            // Shannon Entropy
+            // ===========================
             const entropy = calculateShannonEntropy(token);
-            if (entropy < CONFIG.ENTROPY_THRESHOLD) { continue; }
-
-            // Lolos semua filter → tandai sebagai CG009
-            const tokenCol = line.indexOf(token, match.index);
-            if (tokenCol === -1) { continue; }
+            if (entropy < CONFIG.ENTROPY_THRESHOLD) {
+                continue;
+            }
+            // ===========================
+            // Range
+            // ===========================
+            const tokenColumn = line.indexOf(token, match.index);
+            if (tokenColumn === -1) {
+                continue;
+            }
 
             const range = new vscode.Range(
-                new vscode.Position(lineNum, tokenCol),
-                new vscode.Position(lineNum, tokenCol + token.length),
+                new vscode.Position(lineNum, tokenColumn),
+                new vscode.Position(
+                    lineNum,
+                    tokenColumn + token.length
+                ),
             );
 
             const diag = new vscode.Diagnostic(
                 range,
-                `[CredGuard-CG009] Entropi Shannon tinggi: H = ${entropy.toFixed(2)} bit/char (threshold ${CONFIG.ENTROPY_THRESHOLD}). Kemungkinan token/kunci rahasia hardcoded.`,
+                `[CredGuard-CG009] Entropi Shannon tinggi (H = ${entropy.toFixed(2)} bit/char). Kemungkinan hardcoded credential.`,
                 vscode.DiagnosticSeverity.Warning,
             );
-            diag.source = 'CredGuard';
-            diag.code   = {
-                value:  'CG009',
-                target: vscode.Uri.parse('https://owasp.org/www-project-top-ten/2017/A3_2017-Sensitive_Data_Exposure'),
-            };
 
+            diag.source = "CredGuard";
+            diag.code = {
+                value: "CG009",
+                target: vscode.Uri.parse(
+                    "https://owasp.org/www-project-top-ten/2017/A3_2017-Sensitive_Data_Exposure"
+                ),
+            };
             diagnostics.push(diag);
         }
     }
