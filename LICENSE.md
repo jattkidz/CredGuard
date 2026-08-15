@@ -1,0 +1,3 @@
+Copyright (c) 2026 Aswangga Sujati
+
+Permission is hereby granted, free of charge...

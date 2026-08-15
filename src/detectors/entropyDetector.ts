@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 
-// ===============================
 // Konfigurasi Entropy
-// ===============================
 const CONFIG = {
     MIN_TOKEN_LENGTH: 20,
     ENTROPY_THRESHOLD: 4.0,
@@ -13,9 +11,7 @@ const CONFIG = {
     ],
 };
 
-// ===============================
 // Kata kunci variabel sensitif
-// ===============================
 const SECRET_CONTEXT = [
     "key",
     "apikey",
@@ -41,9 +37,7 @@ const SECRET_CONTEXT = [
     "encryption",
 ];
 
-// ===============================
 // Shannon Entropy
-// ===============================
 export function calculateShannonEntropy(str: string): number {
 
     if (str.length === 0) {
@@ -66,16 +60,11 @@ export function calculateShannonEntropy(str: string): number {
     return entropy;
 }
 
-// ===============================
 // Assignment Pattern
-// ===============================
 const ASSIGNMENT_PATTERN =
 /([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?\s*=\s*['"`]([^'"`\r\n]{20,})['"`]/g;
 
-
-// ===============================
 // Skip Context
-// ===============================
 const SKIP_KEYWORDS = [
     "import",
     "require",
@@ -97,9 +86,7 @@ const SKIP_KEYWORDS = [
     "test(",
 ];
 
-// ===============================
 // Detector
-// ===============================
 export function detectWithEntropy(
     document: vscode.TextDocument
 
@@ -110,7 +97,6 @@ export function detectWithEntropy(
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
         const line = lines[lineNum];
         const trimmed = line.trim();
-        // Skip komentar, import, url, dsb.
         if (SKIP_KEYWORDS.some(k => trimmed.includes(k))) {
             continue;
         }
@@ -123,36 +109,25 @@ export function detectWithEntropy(
             const variableName = match[1].toLowerCase();
             const token = match[2];
 
-            // ===========================
-            // Filter Context
-            // ===========================
             if (!SECRET_CONTEXT.some(k => variableName.includes(k))) {
                 continue;
             }
-            // ===========================
-            // Panjang minimum
-            // ===========================
+
             if (token.length < CONFIG.MIN_TOKEN_LENGTH) {
                 continue;
             }
-            // ===========================
-            // Charset
-            // ===========================
+
             const validCharset =
                 CONFIG.HIGH_ENTROPY_CHARSETS.some(r => r.test(token));
             if (!validCharset) {
                 continue;
             }
-            // ===========================
-            // Shannon Entropy
-            // ===========================
+
             const entropy = calculateShannonEntropy(token);
             if (entropy < CONFIG.ENTROPY_THRESHOLD) {
                 continue;
             }
-            // ===========================
-            // Range
-            // ===========================
+
             const tokenColumn = line.indexOf(token, match.index);
             if (tokenColumn === -1) {
                 continue;

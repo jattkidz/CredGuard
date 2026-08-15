@@ -1,12 +1,20 @@
 {
   "name": "credguard",
   "displayName": "CredGuard",
-  "description": "Real-time sensitive data detector using Regex and Shannon Entropy.",
+  "description": "Real-time Visual Studio Code extension for detecting hardcoded credentials using Pattern Matching (Regex) and Shannon Entropy.",
   "version": "1.0.0",
   "publisher": "jattkidz",
   "icon": "images/iconcg.png",
   "license": "MIT",
   "main": "./out/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jattkidz/CredGuard"
+  },
+  "bugs": {
+    "url": "https://github.com/jattkidz/CredGuard/issues"
+  },
+  "homepage": "https://github.com/jattkidz/CredGuard#readme",
   "engines": {
     "vscode": "^1.109.0"
   },
